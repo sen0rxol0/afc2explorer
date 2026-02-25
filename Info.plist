@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>AFC2Explorer</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>AFC2Explorer</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>10.15</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>AFC2Explorer reads and writes files for transfer to your iPad.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>AFC2Explorer reads and writes files for transfer to your iPad.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>AFC2Explorer saves downloaded files here.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSMainNibFile</key>
+	<string></string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>
