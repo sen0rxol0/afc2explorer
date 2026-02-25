@@ -30,25 +30,26 @@ jobs:
     - name: Xcode version
       run: xcodebuild -version
 
-    # ── 3. Cache Homebrew downloads ───────────────────────────────────────────
-    - name: Cache Homebrew packages
+  # ── 3. Cache Homebrew download cache ─────────────────────────────────────
+    # Cache only ~/Library/Caches/Homebrew (the bottle download cache).
+    # Do NOT cache Cellar directories: on a cache hit brew install would skip
+    # relinking, leaving /usr/local/include and /usr/local/lib symlinks missing
+    # and causing "verify headers" to fail. brew install always runs so that
+    # Homebrew recreates all include/lib/opt symlinks from the Cellar.
+    - name: Cache Homebrew downloads
       uses: actions/cache@v4
       with:
-        path: |
-          ~/Library/Caches/Homebrew
-          /usr/local/Cellar/libplist
-          /usr/local/Cellar/libusbmuxd
-          /usr/local/Cellar/libimobiledevice
-          /opt/homebrew/Cellar/libplist
-          /opt/homebrew/Cellar/libusbmuxd
-          /opt/homebrew/Cellar/libimobiledevice
-        key: brew-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
-        restore-keys: brew-${{ runner.os }}-
+        path: ~/Library/Caches/Homebrew
+        key: brew-downloads-${{ runner.os }}-x86_64-${{ hashFiles('.github/workflows/build.yml') }}
+        restore-keys: brew-downloads-${{ runner.os }}-x86_64-
 
     # ── 4. Install dependencies ───────────────────────────────────────────────
     - name: Install dependencies
       run: |
         brew install libplist libusbmuxd libimobiledevice pkg-config
+        # Run brew link --overwrite in case a partial cache restore left
+        # stale symlinks from a previous version of any formula.
+        brew link --overwrite libplist libusbmuxd libimobiledevice
         echo "BREW_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
 
     # ── 5. Install xcpretty ───────────────────────────────────────────────────
@@ -58,71 +59,96 @@ jobs:
     # ── 6. Verify headers ─────────────────────────────────────────────────────
     - name: Verify headers
       run: |
-        BREW_PREFIX=$(brew --prefix)
         for hdr in \
           libimobiledevice/libimobiledevice.h \
           libimobiledevice/lockdown.h \
           libimobiledevice/afc.h \
           plist/plist.h; do
-          [[ -f "$BREW_PREFIX/include/$hdr" ]] || { echo "ERROR: missing $hdr"; exit 1; }
+          if [ ! -f "$BREW_PREFIX/include/$hdr" ]; then
+            echo "ERROR: missing $hdr"
+            exit 1
+          fi
           echo "OK: $hdr"
         done
 
     # ── 7. Stage dylibs ───────────────────────────────────────────────────────
+    # Rewrites dylib install names to @executable_path/../Frameworks/ so the
+    # app bundle is self-contained and loads them at runtime regardless of
+    # where Homebrew is installed on the end user's machine.
+    #
+    # Note: declare -A (associative arrays) requires bash 4+, but macOS ships
+    # bash 3.2. All loops below use plain positional variables instead.
     - name: Stage dylibs
       run: |
-        BREW_PREFIX=$(brew --prefix)
         FRAMEWORKS_DIR="$GITHUB_WORKSPACE/Frameworks"
         mkdir -p "$FRAMEWORKS_DIR"
 
-        declare -A MAP=(
-          [libplist-2.0]="libplist-2.0.dylib"
-          [libusbmuxd-2.0]="libusbmuxd-2.0.dylib"
-          [libimobiledevice-1.0]="libimobiledevice-1.0.dylib"
-        )
+        # Define dylibs as parallel name/base lists (bash 3.2 compatible)
+        NAMES="libplist-2.0.dylib libusbmuxd-2.0.dylib libimobiledevice-1.0.dylib"
 
-        for base in "${!MAP[@]}"; do
-          NAME="${MAP[$base]}"
+        # ── Copy and set own install name ─────────────────────────────────────
+        for NAME in $NAMES; do
           SRC="$BREW_PREFIX/lib/$NAME"
           DST="$FRAMEWORKS_DIR/$NAME"
-          [[ -f "$SRC" ]] || { echo "ERROR: $SRC not found"; exit 1; }
+
+          if [ ! -f "$SRC" ]; then
+            echo "ERROR: $SRC not found"
+            exit 1
+          fi
+
           cp -f "$SRC" "$DST"
+          # Homebrew dylibs are often installed read-only (444); make writable
+          # before calling install_name_tool or it will fail with EPERM.
+          chmod +w "$DST"
           install_name_tool -id "@executable_path/../Frameworks/$NAME" "$DST"
           echo "Staged: $NAME"
         done
 
-        # Rewrite cross-references
-        for base in "${!MAP[@]}"; do
-          NAME="${MAP[$base]}"
+        # ── Rewrite cross-references between the three dylibs ─────────────────
+        # otool -L may show Cellar absolute paths or versioned symlink targets,
+        # not the bare $BREW_PREFIX/lib path. We iterate every entry in the
+        # otool output and rewrite any that refer to one of our three dylibs,
+        # matching on filename alone (basename) to be path-agnostic.
+        for NAME in $NAMES; do
           DST="$FRAMEWORKS_DIR/$NAME"
-          for other_base in "${!MAP[@]}"; do
-            [[ "$other_base" == "$base" ]] && continue
-            OTHER="${MAP[$other_base]}"
-            OLD="$BREW_PREFIX/lib/$OTHER"
+          for OTHER in $NAMES; do
+            [ "$OTHER" = "$NAME" ] && continue
             NEW="@executable_path/../Frameworks/$OTHER"
-            if otool -L "$DST" | grep -q "$OLD"; then
+            # Find the actual current path recorded for this dependency
+            OLD=$(otool -L "$DST" | awk '{print $1}' | grep -F "$OTHER" || true)
+            if [ -n "$OLD" ]; then
               install_name_tool -change "$OLD" "$NEW" "$DST"
               echo "  Rewrote $OTHER in $NAME"
             fi
           done
         done
 
-    # ── 8. Build ──────────────────────────────────────────────────────────────
+        echo "Dylib staging complete. Contents of Frameworks/:"
+        ls -lh "$FRAMEWORKS_DIR"
+        echo ""
+        echo "Dylib architectures (must be x86_64 to match Intel runner):"
+        for NAME in $NAMES; do
+          printf "  %s: " "$NAME"
+          lipo -archs "$FRAMEWORKS_DIR/$NAME"
+        done
+
+   # ── 8. Build ──────────────────────────────────────────────────────────────
     - name: Build (${{ matrix.configuration }})
       run: |
-        BREW_PREFIX=$(brew --prefix)
-        ROOT="$GITHUB_WORKSPACE"
-        FRAMEWORKS_DIR="$ROOT/Frameworks"
+        FRAMEWORKS_DIR="$GITHUB_WORKSPACE/Frameworks"
 
         set -o pipefail
         xcodebuild build \
           -project AFC2Explorer.xcodeproj \
-          -scheme AFC2Explorer \
+          -scheme AFC2Utility \
           -configuration ${{ matrix.configuration }} \
           -derivedDataPath build/DerivedData \
           CONFIGURATION_BUILD_DIR="build/${{ matrix.configuration }}" \
           MACOSX_DEPLOYMENT_TARGET=10.15 \
-          HEADER_SEARCH_PATHS="\"$ROOT\" \"$BREW_PREFIX/include\" /usr/local/include" \
+          ARCHS=x86_64 \
+          ONLY_ACTIVE_ARCH=NO \
+          VALID_ARCHS=x86_64 \
+          HEADER_SEARCH_PATHS="\"$GITHUB_WORKSPACE\" \"$BREW_PREFIX/include\" /usr/local/include" \
           OTHER_LDFLAGS="-L$FRAMEWORKS_DIR -limobiledevice-1.0 -lusbmuxd-2.0 -lplist-2.0" \
           LD_RUNPATH_SEARCH_PATHS="@executable_path/../Frameworks" \
           CODE_SIGNING_ALLOWED=NO \
@@ -143,11 +169,29 @@ jobs:
         echo "=== Deployment target ==="
         vtool -show-build "$APP/Contents/MacOS/AFC2Explorer"
 
-    # ── 10. Upload artifact ───────────────────────────────────────────────────
+    # ── 10. Zip app bundle ───────────────────────────────────────────────────
+    # GitHub's artifact upload zips directories itself but does NOT preserve
+    # symlinks inside .app bundles (frameworks, versioned dylib links).
+    # Zipping manually with ditto before upload preserves the full bundle
+    # structure and produces a directly usable .app when unzipped.
+    - name: Zip app bundle
+      run: |
+        APP="build/${{ matrix.configuration }}/AFC2Explorer.app"
+        ZIP="build/AFC2Explorer-${{ matrix.configuration }}.zip"
+        ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+        echo "ZIP_PATH=$ZIP" >> "$GITHUB_ENV"
+        echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        echo "Zip size: $(du -sh $ZIP | cut -f1)"
+
+    # ── 11. Upload app artifact ───────────────────────────────────────────────
+    # Name includes branch/tag + short SHA for easy identification in the UI.
+    # Short SHA is the first 7 chars; extracted here for readability.
     - name: Upload app artifact
       uses: actions/upload-artifact@v4
       with:
-        name: AFC2Explorer-${{ matrix.configuration }}-${{ github.sha }}
-        path: build/${{ matrix.configuration }}/AFC2Explorer.app
-        retention-days: 14
+        name: AFC2Explorer-${{ matrix.configuration }}-${{ github.ref_name }}-${{ env.SHORT_SHA }}
+        path: ${{ env.ZIP_PATH }}
+        retention-days: 30
+        compression-level: 0
+        overwrite: true
         if-no-files-found: error
