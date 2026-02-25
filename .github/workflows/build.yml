@@ -122,6 +122,12 @@ jobs:
 
         echo "Dylib staging complete. Contents of Frameworks/:"
         ls -lh "$FRAMEWORKS_DIR"
+        echo ""
+        echo "Dylib architectures (must be x86_64 to match Intel runner):"
+        for NAME in $NAMES; do
+          printf "  %s: " "$NAME"
+          lipo -archs "$FRAMEWORKS_DIR/$NAME"
+        done
 
    # ── 8. Build ──────────────────────────────────────────────────────────────
     - name: Build (${{ matrix.configuration }})
@@ -136,6 +142,9 @@ jobs:
           -derivedDataPath build/DerivedData \
           CONFIGURATION_BUILD_DIR="build/${{ matrix.configuration }}" \
           MACOSX_DEPLOYMENT_TARGET=10.15 \
+          ARCHS=x86_64 \
+          ONLY_ACTIVE_ARCH=NO \
+          VALID_ARCHS=x86_64 \
           HEADER_SEARCH_PATHS="\"$GITHUB_WORKSPACE\" \"$BREW_PREFIX/include\" /usr/local/include" \
           OTHER_LDFLAGS="-L$FRAMEWORKS_DIR -limobiledevice-1.0 -lusbmuxd-2.0 -lplist-2.0" \
           LD_RUNPATH_SEARCH_PATHS="@executable_path/../Frameworks" \
