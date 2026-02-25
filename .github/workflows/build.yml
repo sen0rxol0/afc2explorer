@@ -117,7 +117,7 @@ jobs:
         set -o pipefail
         xcodebuild build \
           -project AFC2Explorer.xcodeproj \
-          -scheme AFC2Explorer \
+          -scheme AFC2Utility \
           -configuration ${{ matrix.configuration }} \
           -derivedDataPath build/DerivedData \
           CONFIGURATION_BUILD_DIR="build/${{ matrix.configuration }}" \
