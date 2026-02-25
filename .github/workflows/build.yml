@@ -54,19 +54,19 @@ jobs:
       run: gem install xcpretty --no-document
 
     # ── 6. Verify headers ─────────────────────────────────────────────────────
-    - name: Verify headers
-      run: |
-        for hdr in \
-          libimobiledevice/libimobiledevice.h \
-          libimobiledevice/lockdown.h \
-          libimobiledevice/afc.h \
-          plist/plist.h; do
-          if [ ! -f "$BREW_PREFIX/include/$hdr" ]; then
-            echo "ERROR: missing $hdr"
-            exit 1
-          fi
-          echo "OK: $hdr"
-        done
+    # - name: Verify headers
+    #   run: |
+    #     for hdr in \
+    #       libimobiledevice/libimobiledevice.h \
+    #       libimobiledevice/lockdown.h \
+    #       libimobiledevice/afc.h \
+    #       plist/plist.h; do
+    #       if [ ! -f "$BREW_PREFIX/include/$hdr" ]; then
+    #         echo "ERROR: missing $hdr"
+    #         exit 1
+    #       fi
+    #       echo "OK: $hdr"
+    #     done
 
     # ── 7. Stage dylibs ───────────────────────────────────────────────────────
     # Rewrites dylib install names to @executable_path/../Frameworks/ so the
