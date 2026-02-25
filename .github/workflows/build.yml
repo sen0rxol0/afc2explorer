@@ -169,11 +169,31 @@ jobs:
         echo "=== Deployment target ==="
         vtool -show-build "$APP/Contents/MacOS/AFC2Explorer"
 
-    # ── 10. Upload artifact ───────────────────────────────────────────────────
+    # ── 10. Zip app bundle ───────────────────────────────────────────────────
+    # GitHub's artifact upload zips directories itself but does NOT preserve
+    # symlinks inside .app bundles (frameworks, versioned dylib links).
+    # Zipping manually with ditto before upload preserves the full bundle
+    # structure and produces a directly usable .app when unzipped.
+    - name: Zip app bundle
+      run: |
+        APP="build/${{ matrix.configuration }}/AFC2Explorer.app"
+        ZIP="build/AFC2Explorer-${{ matrix.configuration }}.zip"
+        ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
+        echo "ZIP_PATH=$ZIP" >> "$GITHUB_ENV"
+        echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        echo "Zip size: $(du -sh $ZIP | cut -f1)"
+
+    # ── 11. Upload app artifact ───────────────────────────────────────────────
+    # Name includes branch/tag + short SHA for easy identification in the UI.
+    # Short SHA is the first 7 chars; extracted here for readability.
     - name: Upload app artifact
       uses: actions/upload-artifact@v4
       with:
-        name: AFC2Explorer-${{ matrix.configuration }}-${{ github.sha }}
-        path: build/${{ matrix.configuration }}/AFC2Explorer.app
-        retention-days: 14
+        name: AFC2Explorer-${{ matrix.configuration }}-${{ github.ref_name }}-${{ env.SHORT_SHA }}
+        path: ${{ env.ZIP_PATH }}
+        retention-days: 30
+        compression-level: 0
+        overwrite: true
         if-no-files-found: error
+
+
