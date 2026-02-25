@@ -1,0 +1,157 @@
+name: Build AFC2Explorer
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.configuration }})
+    runs-on: macos-13
+
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [ Debug, Release ]
+
+    steps:
+
+    # ── 1. Checkout ────────────────────────────────────────────────────────────
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # ── 2. Select Xcode ───────────────────────────────────────────────────────
+    - name: Select Xcode 15.2
+      run: sudo xcode-select --switch /Applications/Xcode_15.2.app/Contents/Developer
+
+    - name: Xcode version
+      run: xcodebuild -version
+
+    # ── 3. Cache Homebrew downloads ───────────────────────────────────────────
+    - name: Cache Homebrew packages
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/Library/Caches/Homebrew
+          /usr/local/Cellar/libplist
+          /usr/local/Cellar/libusbmuxd
+          /usr/local/Cellar/libimobiledevice
+          /opt/homebrew/Cellar/libplist
+          /opt/homebrew/Cellar/libusbmuxd
+          /opt/homebrew/Cellar/libimobiledevice
+        key: brew-${{ runner.os }}-${{ hashFiles('.github/workflows/build.yml') }}
+        restore-keys: brew-${{ runner.os }}-
+
+    # ── 4. Install dependencies ───────────────────────────────────────────────
+    - name: Install dependencies
+      run: |
+        brew install libplist libusbmuxd libimobiledevice pkg-config
+        echo "BREW_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
+
+    # ── 5. Install xcpretty ───────────────────────────────────────────────────
+    - name: Install xcpretty
+      run: gem install xcpretty --no-document
+
+    # ── 6. Verify headers ─────────────────────────────────────────────────────
+    - name: Verify headers
+      run: |
+        BREW_PREFIX=$(brew --prefix)
+        for hdr in \
+          libimobiledevice/libimobiledevice.h \
+          libimobiledevice/lockdown.h \
+          libimobiledevice/afc.h \
+          plist/plist.h; do
+          [[ -f "$BREW_PREFIX/include/$hdr" ]] || { echo "ERROR: missing $hdr"; exit 1; }
+          echo "OK: $hdr"
+        done
+
+    # ── 7. Stage dylibs ───────────────────────────────────────────────────────
+    - name: Stage dylibs
+      run: |
+        BREW_PREFIX=$(brew --prefix)
+        FRAMEWORKS_DIR="$GITHUB_WORKSPACE/Frameworks"
+        mkdir -p "$FRAMEWORKS_DIR"
+
+        declare -A MAP=(
+          [libplist-2.0]="libplist-2.0.dylib"
+          [libusbmuxd-2.0]="libusbmuxd-2.0.dylib"
+          [libimobiledevice-1.0]="libimobiledevice-1.0.dylib"
+        )
+
+        for base in "${!MAP[@]}"; do
+          NAME="${MAP[$base]}"
+          SRC="$BREW_PREFIX/lib/$NAME"
+          DST="$FRAMEWORKS_DIR/$NAME"
+          [[ -f "$SRC" ]] || { echo "ERROR: $SRC not found"; exit 1; }
+          cp -f "$SRC" "$DST"
+          install_name_tool -id "@executable_path/../Frameworks/$NAME" "$DST"
+          echo "Staged: $NAME"
+        done
+
+        # Rewrite cross-references
+        for base in "${!MAP[@]}"; do
+          NAME="${MAP[$base]}"
+          DST="$FRAMEWORKS_DIR/$NAME"
+          for other_base in "${!MAP[@]}"; do
+            [[ "$other_base" == "$base" ]] && continue
+            OTHER="${MAP[$other_base]}"
+            OLD="$BREW_PREFIX/lib/$OTHER"
+            NEW="@executable_path/../Frameworks/$OTHER"
+            if otool -L "$DST" | grep -q "$OLD"; then
+              install_name_tool -change "$OLD" "$NEW" "$DST"
+              echo "  Rewrote $OTHER in $NAME"
+            fi
+          done
+        done
+
+    # ── 8. Build ──────────────────────────────────────────────────────────────
+    - name: Build (${{ matrix.configuration }})
+      run: |
+        BREW_PREFIX=$(brew --prefix)
+        ROOT="$GITHUB_WORKSPACE"
+        FRAMEWORKS_DIR="$ROOT/Frameworks"
+
+        set -o pipefail
+        xcodebuild build \
+          -project AFC2Explorer.xcodeproj \
+          -scheme AFC2Explorer \
+          -configuration ${{ matrix.configuration }} \
+          -derivedDataPath build/DerivedData \
+          CONFIGURATION_BUILD_DIR="build/${{ matrix.configuration }}" \
+          MACOSX_DEPLOYMENT_TARGET=10.15 \
+          HEADER_SEARCH_PATHS="\"$ROOT\" \"$BREW_PREFIX/include\" /usr/local/include" \
+          OTHER_LDFLAGS="-L$FRAMEWORKS_DIR -limobiledevice-1.0 -lusbmuxd-2.0 -lplist-2.0" \
+          LD_RUNPATH_SEARCH_PATHS="@executable_path/../Frameworks" \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGN_IDENTITY="" \
+          | xcpretty
+
+    # ── 9. Verify bundle ──────────────────────────────────────────────────────
+    - name: Verify app bundle
+      run: |
+        APP="build/${{ matrix.configuration }}/AFC2Explorer.app"
+        [[ -d "$APP" ]] || { echo "ERROR: .app not found at $APP"; exit 1; }
+        echo "=== Binary ==="
+        ls -lh "$APP/Contents/MacOS/"
+        echo ""
+        echo "=== Dylib linkage ==="
+        otool -L "$APP/Contents/MacOS/AFC2Explorer"
+        echo ""
+        echo "=== Deployment target ==="
+        vtool -show-build "$APP/Contents/MacOS/AFC2Explorer"
+
+    # ── 10. Upload artifact ───────────────────────────────────────────────────
+    - name: Upload app artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: AFC2Explorer-${{ matrix.configuration }}-${{ github.sha }}
+        path: build/${{ matrix.configuration }}/AFC2Explorer.app
+        retention-days: 14
+        if-no-files-found: error
