@@ -30,23 +30,26 @@ jobs:
     - name: Xcode version
       run: xcodebuild -version
 
-    # ── 3. Cache Homebrew downloads ───────────────────────────────────────────
-    # macos-15-intel is x86_64 — Homebrew prefix is /usr/local, not /opt/homebrew
-    - name: Cache Homebrew packages
+  # ── 3. Cache Homebrew download cache ─────────────────────────────────────
+    # Cache only ~/Library/Caches/Homebrew (the bottle download cache).
+    # Do NOT cache Cellar directories: on a cache hit brew install would skip
+    # relinking, leaving /usr/local/include and /usr/local/lib symlinks missing
+    # and causing "verify headers" to fail. brew install always runs so that
+    # Homebrew recreates all include/lib/opt symlinks from the Cellar.
+    - name: Cache Homebrew downloads
       uses: actions/cache@v4
       with:
-        path: |
-          ~/Library/Caches/Homebrew
-          /usr/local/Cellar/libplist
-          /usr/local/Cellar/libusbmuxd
-          /usr/local/Cellar/libimobiledevice
-        key: brew-${{ runner.os }}-x86_64-${{ hashFiles('.github/workflows/build.yml') }}
-        restore-keys: brew-${{ runner.os }}-x86_64-
+        path: ~/Library/Caches/Homebrew
+        key: brew-downloads-${{ runner.os }}-x86_64-${{ hashFiles('.github/workflows/build.yml') }}
+        restore-keys: brew-downloads-${{ runner.os }}-x86_64-
 
     # ── 4. Install dependencies ───────────────────────────────────────────────
     - name: Install dependencies
       run: |
         brew install libplist libusbmuxd libimobiledevice pkg-config
+        # Run brew link --overwrite in case a partial cache restore left
+        # stale symlinks from a previous version of any formula.
+        brew link --overwrite libplist libusbmuxd libimobiledevice
         echo "BREW_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
 
     # ── 5. Install xcpretty ───────────────────────────────────────────────────
@@ -54,19 +57,19 @@ jobs:
       run: gem install xcpretty --no-document
 
     # ── 6. Verify headers ─────────────────────────────────────────────────────
-    # - name: Verify headers
-    #   run: |
-    #     for hdr in \
-    #       libimobiledevice/libimobiledevice.h \
-    #       libimobiledevice/lockdown.h \
-    #       libimobiledevice/afc.h \
-    #       plist/plist.h; do
-    #       if [ ! -f "$BREW_PREFIX/include/$hdr" ]; then
-    #         echo "ERROR: missing $hdr"
-    #         exit 1
-    #       fi
-    #       echo "OK: $hdr"
-    #     done
+    - name: Verify headers
+      run: |
+        for hdr in \
+          libimobiledevice/libimobiledevice.h \
+          libimobiledevice/lockdown.h \
+          libimobiledevice/afc.h \
+          plist/plist.h; do
+          if [ ! -f "$BREW_PREFIX/include/$hdr" ]; then
+            echo "ERROR: missing $hdr"
+            exit 1
+          fi
+          echo "OK: $hdr"
+        done
 
     # ── 7. Stage dylibs ───────────────────────────────────────────────────────
     # Rewrites dylib install names to @executable_path/../Frameworks/ so the
