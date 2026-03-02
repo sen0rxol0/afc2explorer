@@ -426,7 +426,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     NSAlert *alert = [[NSAlert alloc] init];
     alert.alertStyle = NSAlertStyleWarning;
     if (toDelete.count == 1) {
-        alert.messageText     = [NSString stringWithFormat:@"Delete "%@"?", toDelete[0].info.name];
+        alert.messageText     = [NSString stringWithFormat:@"Delete %@ ?", toDelete[0].info.name];
         alert.informativeText = @"This item will be permanently deleted from the device. "
                                 @"This cannot be undone.";
     } else {
@@ -437,7 +437,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     [alert addButtonWithTitle:@"Delete"];
     [alert addButtonWithTitle:@"Cancel"];
     if (@available(macOS 12.0, *)) {
-        alert.buttons[0].hasDestructiveAction = YES;
+//        alert.buttons[0].hasDestructiveAction = YES;
     }
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
 
@@ -448,7 +448,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
             completed++;
             if (err) {
                 [self showError:err title:[NSString stringWithFormat:
-                    @"Could Not Delete "%@"", node.info.name]];
+                    @"Could Not Delete \"%@\"", node.info.name]];
             }
             if (completed == toDelete.count)
                 dispatch_async(dispatch_get_main_queue(), ^{ [self navigateTo:_currentPath]; });
@@ -484,7 +484,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     DirectoryNode *node = [_outlineView itemAtRow:row];
 
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = [NSString stringWithFormat:@"Rename "%@"", node.info.name];
+    alert.messageText = [NSString stringWithFormat:@"Rename \"%@\"", node.info.name];
     NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)];
     tf.stringValue = node.info.name;
     alert.accessoryView = tf;
@@ -501,7 +501,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
                          stringByAppendingPathComponent:newName];
     [self.afc2Client renamePath:node.info.path to:newPath completion:^(NSError *err) {
         if (err) [self showError:err title:[NSString stringWithFormat:
-                    @"Could Not Rename "%@"", node.info.name]];
+                    @"Could Not Rename \"%@\"", node.info.name]];
         else     dispatch_async(dispatch_get_main_queue(), ^{ [self navigateTo:_currentPath]; });
     }];
 }
