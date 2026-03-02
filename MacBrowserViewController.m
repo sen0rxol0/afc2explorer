@@ -135,7 +135,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     NSAlert *alert = [[NSAlert alloc] init];
     alert.alertStyle    = NSAlertStyleWarning;
     alert.messageText   = @"Cannot Open Folder";
-    alert.informativeText = [NSString stringWithFormat:@"%@\n\n%@",
+    alert.informativeText = [NSString stringWithFormat:@"\"%@\"\n\n%@",
                              [path stringByAbbreviatingWithTildeInPath],
                              err.localizedDescription];
     [alert addButtonWithTitle:@"OK"];
@@ -165,19 +165,22 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
 // ── triggerUpload (called from menu bar) ──────────────────────────────────────
 
 - (void)triggerUpload {
-    NSOpenPanel *panel = [NSOpenPanel openPanel];
-    panel.canChooseFiles       = YES;
-    panel.canChooseDirectories = NO;
-    panel.allowsMultipleSelection = YES;
-    panel.prompt   = @"Upload";
-    panel.message  = @"Choose files to upload to the iPad:";
-    panel.directoryURL = [NSURL fileURLWithPath:_currentPath ?: NSHomeDirectory()];
-
-    if ([panel runModal] != NSModalResponseOK) return;
-    if (!self.partnerBrowser.currentPath) {
+    // FIX (UX): check device first — don't make the user pick files and then
+    // see a "no device" error after the panel closes.
+    if (!self.partnerBrowser.currentPath || !self.transferEngine) {
         [self showNoDeviceAlert];
         return;
     }
+
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles          = YES;
+    panel.canChooseDirectories    = NO;
+    panel.allowsMultipleSelection = YES;
+    panel.prompt      = @"Upload";
+    panel.message     = @"Choose files to upload to the iPad:";
+    panel.directoryURL = [NSURL fileURLWithPath:_currentPath ?: NSHomeDirectory()];
+
+    if ([panel runModal] != NSModalResponseOK) return;
     for (NSURL *url in panel.URLs) {
         NSString *dest = [self.partnerBrowser.currentPath
                           stringByAppendingPathComponent:url.lastPathComponent];

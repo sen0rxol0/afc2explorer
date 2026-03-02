@@ -21,7 +21,7 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
     idevice_t     _device;
 }
 @property (nonatomic, strong) dispatch_queue_t queue;
-@property (nonatomic, readwrite, getter=isValid) BOOL valid;
+@property (nonatomic, readwrite, getter=isValid) BOOL valid;  // atomic access via queue
 @end
 
 // ── Implementation ────────────────────────────────────────────────────────────
@@ -38,14 +38,23 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
 }
 
 - (void)dealloc {
-    [self invalidate];
+    // FIX (CRASH): do NOT call invalidate here — it dispatch_syncs on _queue which
+    // can deadlock if dealloc runs from within a completion block on the queue.
+    // Instead tear down directly; _valid is already NO if invalidate was called,
+    // or we clean up now without touching the queue.
+    if (_afc)    { afc_client_free(_afc);   _afc    = NULL; }
+    if (_device) { idevice_free(_device);   _device = NULL; }
 }
 
 - (void)invalidate {
-    dispatch_sync(_queue, ^{
+    // FIX (CRASH): use a flag + async to avoid dispatch_sync deadlock.
+    // Mark invalid immediately (checked before every operation), then
+    // schedule resource teardown asynchronously so any in-flight block
+    // completes first.
+    _valid = NO;   // written before async so new enqueued blocks bail early
+    dispatch_async(_queue, ^{
         if (_afc)    { afc_client_free(_afc);   _afc    = NULL; }
         if (_device) { idevice_free(_device);   _device = NULL; }
-        _valid = NO;
     });
 }
 
@@ -72,6 +81,7 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
 }
 
 // ── listDirectory ─────────────────────────────────────────────────────────────
+// FIX (docs): Completions are delivered on the MAIN thread. Header updated accordingly.
 
 - (void)listDirectory:(NSString *)path
            completion:(void (^)(NSArray<AFC2FileInfo *> *, NSError *))completion {
@@ -89,7 +99,6 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
         for (int i = 0; list[i]; i++) {
             NSString *name = @(list[i]);
             if ([name isEqualToString:@"."] || [name isEqualToString:@".."]) continue;
-
             NSString *fullPath = [path stringByAppendingPathComponent:name];
             AFC2FileInfo *info = [self fileInfoForPath:fullPath name:name];
             if (info) [items addObject:info];
@@ -150,16 +159,13 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
         if (!attrs) { [self callCompletion:completion error:localErr]; return; }
         int64_t totalBytes = [attrs[NSFileSize] longLongValue];
 
-        // Open local for reading
         FILE *fp = fopen(localPath.fileSystemRepresentation, "rb");
         if (!fp) {
             [self callCompletion:completion error:[NSError errorWithDomain:NSPOSIXErrorDomain code:errno userInfo:nil]];
             return;
         }
 
-        // Open device for writing (create/overwrite)
         uint64_t handle = 0;
-        // AFC_FOPEN_WR = create-or-truncate-for-writing (enum value 4, not a bitmask)
         afc_error_t err = afc_file_open(_afc, devicePath.UTF8String, AFC_FOPEN_WR, &handle);
         if (err != AFC_E_SUCCESS) {
             fclose(fp);
@@ -190,8 +196,14 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
         fclose(fp);
         afc_file_close(_afc, handle);
 
-        NSError *resultErr = failed ? [self errorForAFCError:err path:devicePath] : nil;
-        [self callCompletion:completion error:resultErr];
+        if (failed) {
+            // FIX (BUG): delete the partial device file on upload failure,
+            // mirroring what downloadDeviceFile does for partial local files.
+            afc_remove_path(_afc, devicePath.UTF8String);
+            [self callCompletion:completion error:[self errorForAFCError:err path:devicePath]];
+        } else {
+            [self callCompletion:completion error:nil];
+        }
     }];
 }
 
@@ -204,7 +216,6 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
     [self asyncOnQueue:^{
         if (!self.valid) { [self callCompletion:completion error:[self invalidatedError]]; return; }
 
-        // Get file size for progress
         AFC2FileInfo *info = [self fileInfoForPath:devicePath name:devicePath.lastPathComponent];
         int64_t totalBytes = info ? (int64_t)info.fileSize : -1;
 
@@ -279,8 +290,7 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
         for (int i = 0; list[i]; i++) {
             NSString *name = @(list[i]);
             if ([name isEqualToString:@"."] || [name isEqualToString:@".."]) continue;
-            NSString *child = [path stringByAppendingPathComponent:name];
-            [self removeRecursive:child];
+            [self removeRecursive:[path stringByAppendingPathComponent:name]];
         }
         afc_dictionary_free(list);
     }
@@ -309,6 +319,7 @@ static const uint32_t kChunkSize = 256 * 1024;  // 256 KB
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
+// All completions are dispatched to the main queue.
 - (void)callCompletion:(AFC2CompletionHandler)completion error:(NSError *)error {
     dispatch_async(dispatch_get_main_queue(), ^{ completion(error); });
 }

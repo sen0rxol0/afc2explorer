@@ -3,6 +3,7 @@
 #import "TransferEngine.h"
 #import "FileSafetyLayer.h"
 #import "MacBrowserViewController.h"
+#include <libimobiledevice/afc.h>
 
 static NSString *const kRowType    = @"AFC2FileInfoPboardType";
 static NSString *const kMacRowType = @"MacFileInfoPboardType";
@@ -107,7 +108,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     _outlineView.headerView = headerView;
     nameCol.title = @"Name";
 
-    [_outlineView registerForDraggedTypes:@[NSFilenamesPboardType, kMacRowType]];
+    [_outlineView registerForDraggedTypes:@[NSPasteboardTypeFileURL, kMacRowType]];
     [_outlineView setDraggingSourceOperationMask:NSDragOperationEvery forLocal:YES];
     [_outlineView setDraggingSourceOperationMask:NSDragOperationEvery forLocal:NO];
 
@@ -170,13 +171,8 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
 - (void)rebuildRootWithItems:(NSArray<AFC2FileInfo *> *)items path:(NSString *)path {
     _root = [[DirectoryNode alloc] init];
     _root.loaded = YES;
-    // Sort: folders first, then alpha
-    NSArray *sorted = [items sortedArrayUsingComparator:^NSComparisonResult(AFC2FileInfo *a, AFC2FileInfo *b) {
-        if (a.isDirectory != b.isDirectory)
-            return a.isDirectory ? NSOrderedAscending : NSOrderedDescending;
-        return [a.name localizedCaseInsensitiveCompare:b.name];
-    }];
-    for (AFC2FileInfo *info in sorted) {
+    // AFC2Client.listDirectory already returns items sorted (dirs first, then alpha).
+    for (AFC2FileInfo *info in items) {
         [_root.children addObject:[[DirectoryNode alloc] initWithInfo:info]];
     }
     [_outlineView reloadData];
@@ -306,7 +302,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
                   validateDrop:(id<NSDraggingInfo>)info
                   proposedItem:(id)item
             proposedChildIndex:(NSInteger)idx {
-    return [[info.draggingPasteboard types] containsObject:NSFilenamesPboardType]
+    return [[info.draggingPasteboard types] containsObject:NSPasteboardTypeFileURL]
            ? NSDragOperationCopy : NSDragOperationNone;
 }
 
@@ -314,7 +310,10 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
          acceptDrop:(id<NSDraggingInfo>)info
                item:(id)item
          childIndex:(NSInteger)idx {
-    NSArray<NSString *> *files = [info.draggingPasteboard propertyListForType:NSFilenamesPboardType];
+    // Read dragged file URLs using the modern non-deprecated type.
+    NSArray<NSURL *> *draggedURLs = [info.draggingPasteboard readObjectsForClasses:@[[NSURL class]]
+                                        options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    NSArray<NSString *> *files = [draggedURLs valueForKey:@"path"];
     DirectoryNode *destNode    = item;
     NSString *destDir          = destNode ? destNode.info.path : _currentPath;
 
@@ -333,10 +332,12 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
 
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
-    NSInteger row     = _outlineView.clickedRow;
-    BOOL hasItem      = (row >= 0 && row < (NSInteger)_root.children.count);
-    DirectoryNode *node = hasItem ? [_outlineView itemAtRow:row] : nil;
-    BOOL isDir        = node.info.isDirectory;
+    NSInteger row       = _outlineView.clickedRow;
+    // FIX (BUG): use itemAtRow: to test for a real item — _root.children.count
+    // only covers the top level; expanded subdirectory rows are beyond that count.
+    DirectoryNode *node = (row >= 0) ? [_outlineView itemAtRow:row] : nil;
+    BOOL hasItem        = (node != nil && node.info != nil);
+    BOOL isDir          = node.info.isDirectory;
 
     if (hasItem) {
         NSMenuItem *dlItem = [menu addItemWithTitle:isDir ? @"Download Folder…" : @"Download…"
@@ -390,13 +391,28 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     if ([panel runModal] != NSModalResponseOK) return;
     NSString *destDir = panel.URL.path;
 
+    __block NSUInteger skipped = 0;
     [rows enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
         DirectoryNode *node = [_outlineView itemAtRow:idx];
-        if (!node.info.isDirectory) {
+        if (node.info.isDirectory) {
+            skipped++;
+        } else {
             NSString *local = [destDir stringByAppendingPathComponent:node.info.name];
             [self.transferEngine enqueueDownloadFromDevicePath:node.info.path toLocalPath:local];
         }
     }];
+    // FIX (UX): inform the user when folders were skipped instead of silently doing nothing
+    if (skipped > 0) {
+        NSAlert *a = [[NSAlert alloc] init];
+        a.alertStyle = NSAlertStyleInformational;
+        a.messageText = skipped == 1 ? @"Folder Download Not Supported" : @"Folders Skipped";
+        a.informativeText = [NSString stringWithFormat:
+            @"%lu folder%@ cannot be downloaded directly. "
+            @"Open the folder first and download the individual files inside it.",
+            (unsigned long)skipped, skipped == 1 ? @"" : @"s"];
+        [a addButtonWithTitle:@"OK"];
+        [a runModal];
+    }
 }
 
 - (IBAction)deleteSelected:(id)sender {
@@ -410,7 +426,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     NSAlert *alert = [[NSAlert alloc] init];
     alert.alertStyle = NSAlertStyleWarning;
     if (toDelete.count == 1) {
-        alert.messageText     = [NSString stringWithFormat:@"Delete %@ ?", toDelete[0].info.name];
+        alert.messageText     = [NSString stringWithFormat:@"Delete "%@"?", toDelete[0].info.name];
         alert.informativeText = @"This item will be permanently deleted from the device. "
                                 @"This cannot be undone.";
     } else {
@@ -420,9 +436,9 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     }
     [alert addButtonWithTitle:@"Delete"];
     [alert addButtonWithTitle:@"Cancel"];
-//    if (@available(macOS 12.0, *)) {
-//        alert.buttons[0].hasDestructiveAction = YES;
-//    }
+    if (@available(macOS 12.0, *)) {
+        alert.buttons[0].hasDestructiveAction = YES;
+    }
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
 
     __block NSUInteger completed = 0;
@@ -432,7 +448,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
             completed++;
             if (err) {
                 [self showError:err title:[NSString stringWithFormat:
-                    @"Could Not Delete %@", node.info.name]];
+                    @"Could Not Delete "%@"", node.info.name]];
             }
             if (completed == toDelete.count)
                 dispatch_async(dispatch_get_main_queue(), ^{ [self navigateTo:_currentPath]; });
@@ -468,7 +484,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
     DirectoryNode *node = [_outlineView itemAtRow:row];
 
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = [NSString stringWithFormat:@"Rename %@", node.info.name];
+    alert.messageText = [NSString stringWithFormat:@"Rename "%@"", node.info.name];
     NSTextField *tf = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)];
     tf.stringValue = node.info.name;
     alert.accessoryView = tf;
@@ -485,7 +501,7 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
                          stringByAppendingPathComponent:newName];
     [self.afc2Client renamePath:node.info.path to:newPath completion:^(NSError *err) {
         if (err) [self showError:err title:[NSString stringWithFormat:
-                    @"Could Not Rename %@", node.info.name]];
+                    @"Could Not Rename "%@"", node.info.name]];
         else     dispatch_async(dispatch_get_main_queue(), ^{ [self navigateTo:_currentPath]; });
     }];
 }
@@ -511,12 +527,51 @@ static NSString *const kMacRowType = @"MacFileInfoPboardType";
 
 // ── Error presentation ────────────────────────────────────────────────────────
 
+/// Serialised on main thread — only one alert shown at a time to avoid
+/// stacking multiple modal dialogs if a burst of errors arrives.
 - (void)showError:(NSError *)error title:(NSString *)title {
     dispatch_async(dispatch_get_main_queue(), ^{
+        // If a modal is already running (e.g. the user hasn't dismissed a
+        // previous error), queue this one to run afterward instead of stacking.
+        if ([NSApp modalWindow]) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                [self showError:error title:title];
+            });
+            return;
+        }
+
+        NSString *reason = error.localizedDescription ?: @"An unknown error occurred.";
+        NSString *hint   = @"";
+
+        // Add actionable hints for common AFC errors.
+        if ([error.domain isEqualToString:@"AFC2ClientErrorDomain"]) {
+            switch ((afc_error_t)error.code) {
+                case 8:  // AFC_E_PERM_DENIED
+                    hint = @"\n\nThis path is protected. Writes to system directories "
+                           @"(/System, /bin, /usr, /sbin) are blocked for safety.";
+                    break;
+                case 6:  // AFC_E_OBJECT_NOT_FOUND
+                    hint = @"\n\nThe file or directory no longer exists. "
+                           @"Try refreshing the iPad browser (\u21bb).";
+                    break;
+                case 7:  // AFC_E_OBJECT_EXISTS
+                    hint = @"\n\nA file or folder with that name already exists. "
+                           @"Rename or delete the existing item first.";
+                    break;
+                case -1: // invalidated (device disconnected mid-op)
+                    hint = @"\n\nThe device was disconnected during the operation. "
+                           @"Reconnect the iPad and try again.";
+                    break;
+                default:
+                    break;
+            }
+        }
+
         NSAlert *a = [[NSAlert alloc] init];
         a.alertStyle    = NSAlertStyleWarning;
         a.messageText   = title;
-        a.informativeText = error.localizedDescription ?: @"An unknown error occurred.";
+        a.informativeText = [reason stringByAppendingString:hint];
         [a addButtonWithTitle:@"OK"];
         [a runModal];
     });

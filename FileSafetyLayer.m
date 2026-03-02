@@ -70,7 +70,7 @@ static NSArray<NSString *> *warnedPrefixes(void) {
     NSAlert *alert = [[NSAlert alloc] init];
     alert.messageText    = [NSString stringWithFormat:@"%@ sensitive path?", action];
     alert.informativeText = [NSString stringWithFormat:
-        @"%@ is in a sensitive location.\n\nProceeding may affect system stability. Are you sure?", path];
+        @"\"%@\" is in a sensitive location.\n\nProceeding may affect system stability. Are you sure?", path];
     alert.alertStyle     = NSAlertStyleWarning;
     [alert addButtonWithTitle:@"Proceed"];
     [alert addButtonWithTitle:@"Cancel"];
@@ -89,7 +89,7 @@ static NSArray<NSString *> *warnedPrefixes(void) {
     return [NSError errorWithDomain:@"AFC2SafetyErrorDomain"
                                code:1
                            userInfo:@{NSLocalizedDescriptionKey:
-                               [NSString stringWithFormat:@"Access to %@ is blocked for safety.", path]}];
+                               [NSString stringWithFormat:@"Access to \"%@\" is blocked for safety.", path]}];
 }
 
 @end

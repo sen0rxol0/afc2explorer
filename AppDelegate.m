@@ -1,14 +1,33 @@
 #import "AppDelegate.h"
 #import "MainWindowController.h"
 #import "DeviceManager.h"
+#import "StatusBarController.h"
 
 @implementation AppDelegate
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     [self buildMenuBar];
+    [StatusBarController sharedController];   // create menu bar icon early
     self.mainWindowController = [[MainWindowController alloc] init];
     [self.mainWindowController showWindow:nil];
     [[DeviceManager sharedManager] startMonitoring];
+
+    // Keep the menu bar status item in sync with device state
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserver:self selector:@selector(_deviceStateChanged:)
+               name:DeviceDidConnectNotification object:nil];
+    [nc addObserver:self selector:@selector(_deviceStateChanged:)
+               name:DeviceDidDisconnectNotification object:nil];
+    [nc addObserver:self selector:@selector(_deviceStateChanged:)
+               name:DeviceConnectionFailedNotification object:nil];
+    [nc addObserver:self selector:@selector(_deviceStateChanged:)
+               name:DeviceConnectionRetryingNotification object:nil];
+}
+
+- (void)_deviceStateChanged:(NSNotification *)note {
+    DeviceManager *mgr = [DeviceManager sharedManager];
+    [[StatusBarController sharedController]
+        updateConnectionState:mgr.connectionState deviceName:mgr.deviceName];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
@@ -31,6 +50,8 @@
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
+    [appMenu addItemWithTitle:@"Preferences\u2026" action:nil keyEquivalent:@","];
+    [appMenu addItem:[NSMenuItem separatorItem]];
     [appMenu addItemWithTitle:@"Hide AFC2 Utility" action:@selector(hide:) keyEquivalent:@"h"];
     NSMenuItem *hideOthers = [appMenu addItemWithTitle:@"Hide Others"
                                                 action:@selector(hideOtherApplications:)
@@ -45,40 +66,62 @@
     // File menu
     NSMenuItem *fileItem = [[NSMenuItem alloc] init];
     NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-    [[fileMenu addItemWithTitle:@"Upload Files to iPad…"
-                         action:@selector(triggerUpload:)
-                  keyEquivalent:@"u"] setTarget:self];
-    [[fileMenu addItemWithTitle:@"Download Selected from iPad…"
-                         action:@selector(triggerDownload:)
-                  keyEquivalent:@"d"] setTarget:self];
+
+    NSMenuItem *uploadItem = [fileMenu addItemWithTitle:@"Upload Files to iPad\u2026"
+                                                 action:@selector(triggerUpload:)
+                                          keyEquivalent:@"u"];
+    uploadItem.target = self;
+
+    NSMenuItem *downloadItem = [fileMenu addItemWithTitle:@"Download Selected from iPad\u2026"
+                                                   action:@selector(triggerDownload:)
+                                            keyEquivalent:@"d"];
+    downloadItem.target = self;
+
     [fileMenu addItem:[NSMenuItem separatorItem]];
-    [[fileMenu addItemWithTitle:@"New Folder on iPad…"
-                         action:@selector(triggerNewFolder:)
-                  keyEquivalent:@"N"] setTarget:self];
+
+    NSMenuItem *newFolderItem = [fileMenu addItemWithTitle:@"New Folder on iPad\u2026"
+                                                    action:@selector(triggerNewFolder:)
+                                             keyEquivalent:@"N"];
+    newFolderItem.target = self;
+
     [fileMenu addItem:[NSMenuItem separatorItem]];
-    [[fileMenu addItemWithTitle:@"Refresh iPad"
-                         action:@selector(triggerRefresh:)
-                  keyEquivalent:@"r"] setTarget:self];
+
+    NSMenuItem *refreshItem = [fileMenu addItemWithTitle:@"Refresh iPad"
+                                                  action:@selector(triggerRefresh:)
+                                           keyEquivalent:@"r"];
+    refreshItem.target = self;
+
     fileItem.submenu = fileMenu;
     [mainMenu addItem:fileItem];
 
     // Device menu
     NSMenuItem *deviceItem = [[NSMenuItem alloc] init];
     NSMenu *deviceMenu = [[NSMenu alloc] initWithTitle:@"Device"];
-    [[deviceMenu addItemWithTitle:@"Reconnect"
-                           action:@selector(reconnectDevice:)
-                    keyEquivalent:@"k"] setTarget:self];
+
+    NSMenuItem *reconItem = [deviceMenu addItemWithTitle:@"Reconnect"
+                                                  action:@selector(reconnectDevice:)
+                                           keyEquivalent:@"k"];
+    reconItem.target = self;
+
     [deviceMenu addItem:[NSMenuItem separatorItem]];
-    [[deviceMenu addItemWithTitle:@"AFC2 Installation Guide…"
-                           action:@selector(showAFC2Guide:)
-                    keyEquivalent:@""] setTarget:self];
-    [[deviceMenu addItemWithTitle:@"Jailbreak Guide…"
-                           action:@selector(showJailbreakGuide:)
-                    keyEquivalent:@""] setTarget:self];
+
+    NSMenuItem *afc2Item = [deviceMenu addItemWithTitle:@"AFC2 Installation Guide\u2026"
+                                                 action:@selector(showAFC2Guide:)
+                                          keyEquivalent:@""];
+    afc2Item.target = self;
+
+    NSMenuItem *jbItem = [deviceMenu addItemWithTitle:@"Jailbreak Guide (Ph\u0153nix)\u2026"
+                                               action:@selector(showJailbreakGuide:)
+                                        keyEquivalent:@""];
+    jbItem.target = self;
+
     [deviceMenu addItem:[NSMenuItem separatorItem]];
-    [[deviceMenu addItemWithTitle:@"Connection Troubleshooting…"
-                           action:@selector(showTroubleshooting:)
-                    keyEquivalent:@""] setTarget:self];
+
+    NSMenuItem *troubleItem = [deviceMenu addItemWithTitle:@"Connection Troubleshooting\u2026"
+                                                    action:@selector(showTroubleshooting:)
+                                             keyEquivalent:@""];
+    troubleItem.target = self;
+
     deviceItem.submenu = deviceMenu;
     [mainMenu addItem:deviceItem];
 
@@ -96,14 +139,38 @@
     // Help menu
     NSMenuItem *helpItem = [[NSMenuItem alloc] init];
     NSMenu *helpMenu = [[NSMenu alloc] initWithTitle:@"Help"];
-    [[helpMenu addItemWithTitle:@"AFC2 Utility Help"
-                         action:@selector(showHelp:)
-                  keyEquivalent:@"?"] setTarget:self];
+    NSMenuItem *helpMenuItem = [helpMenu addItemWithTitle:@"AFC2 Utility Help"
+                                                   action:@selector(showHelp:)
+                                            keyEquivalent:@"?"];
+    helpMenuItem.target = self;
     helpItem.submenu = helpMenu;
     [NSApp setHelpMenu:helpMenu];
     [mainMenu addItem:helpItem];
 
     [NSApp setMainMenu:mainMenu];
+}
+
+// ── Menu validation ───────────────────────────────────────────────────────────
+// File-menu actions that require an active device connection should only be
+// enabled when the device is connected.
+
+- (BOOL)validateMenuItem:(NSMenuItem *)item {
+    SEL action = item.action;
+    BOOL isConnected = ([DeviceManager sharedManager].connectionState == DeviceConnectionStateConnected);
+
+    if (action == @selector(triggerUpload:) ||
+        action == @selector(triggerDownload:) ||
+        action == @selector(triggerNewFolder:) ||
+        action == @selector(triggerRefresh:)) {
+        return isConnected;
+    }
+
+    if (action == @selector(reconnectDevice:)) {
+        // Enable reconnect whenever we are NOT currently connected.
+        return !isConnected;
+    }
+
+    return YES;
 }
 
 // ── Menu actions (forward to main window controller) ──────────────────────────
@@ -115,7 +182,9 @@
 
 - (IBAction)reconnectDevice:(id)sender {
     [[DeviceManager sharedManager] disconnect];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+    // FIX (UX): use a slightly longer delay so usbmuxd has time to stabilise
+    // before we re-subscribe and re-probe for the device.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         [[DeviceManager sharedManager] startMonitoring];
     });

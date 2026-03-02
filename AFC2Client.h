@@ -32,7 +32,9 @@ typedef void (^AFC2CompletionHandler)(NSError * _Nullable error);
 /// YES until -invalidate is called.
 @property (nonatomic, readonly, getter=isValid) BOOL valid;
 
-// ── Filesystem operations (all execute on internal background queue) ──────────
+// ── Filesystem operations ────────────────────────────────────────────────────
+// Operations execute on an internal background queue.
+// All completion blocks are called on the MAIN thread.
 
 - (void)listDirectory:(NSString *)path
            completion:(void (^)(NSArray<AFC2FileInfo *> * _Nullable items,

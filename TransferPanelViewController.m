@@ -163,15 +163,21 @@
     TransferItem *item = self.snapshot[row];
     NSString     *ident = col.identifier;
 
-    // Progress bar column
+    // Progress bar column — FIX (BUG): reuse cells like every other column
     if ([ident isEqualToString:@"progress"]) {
-        NSProgressIndicator *pi = [[NSProgressIndicator alloc] init];
-        pi.style        = NSProgressIndicatorStyleBar;
-        pi.minValue     = 0;
-        pi.maxValue     = 1;
-        pi.indeterminate = (item.state == TransferItemStateRunning && item.progress < 0.01);
-        pi.doubleValue  = item.progress;
-        if (pi.indeterminate) [pi startAnimation:nil];
+        NSProgressIndicator *pi = [tv makeViewWithIdentifier:@"progressCell" owner:self];
+        if (!pi) {
+            pi = [[NSProgressIndicator alloc] init];
+            pi.style    = NSProgressIndicatorStyleBar;
+            pi.minValue = 0;
+            pi.maxValue = 1;
+            pi.identifier = @"progressCell";
+        }
+        BOOL indeterminate = (item.state == TransferItemStateRunning && item.progress < 0.01);
+        pi.indeterminate = indeterminate;
+        pi.doubleValue   = item.progress;
+        if (indeterminate) [pi startAnimation:nil];
+        else               [pi stopAnimation:nil];
         return pi;
     }
 

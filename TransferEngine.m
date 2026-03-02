@@ -52,7 +52,7 @@ static const int kMaxRetries = 3;
     _client       = client;
     _mutableItems = [NSMutableArray array];
     _queue        = [[NSOperationQueue alloc] init];
-    _queue.maxConcurrentOperationCount = 1;   // serial – one transfer at a time for USB
+    _queue.maxConcurrentOperationCount = 1;   // serial — one transfer at a time for USB
     _queue.qualityOfService            = NSQualityOfServiceUtility;
     _queue.name                        = @"com.afc2util.transfers";
     return self;
@@ -148,8 +148,10 @@ static const int kMaxRetries = 3;
 }
 
 - (BOOL)isTransientError:(NSError *)error {
-    // AFC I/O errors and device-lost errors may be transient
-    return error.code == -6 /* AFC_E_IO_ERROR */ || error.code == -1;
+    // FIX (BUG): AFC_E_IO_ERROR = 18 per libimobiledevice enum, not -6.
+    // Code -6 was wrong (that's AFC_E_OP_WOULD_BLOCK). Retry on real I/O errors
+    // and on device-connection errors (code -1 from invalidatedError).
+    return error.code == AFC_E_IO_ERROR || error.code == -1;
 }
 
 // ── Control ───────────────────────────────────────────────────────────────────
@@ -165,13 +167,29 @@ static const int kMaxRetries = 3;
 }
 
 - (void)clearCompleted {
+    NSArray *removed;
     @synchronized(self) {
+        NSArray *before = [self.mutableItems copy];
         [self.mutableItems filterUsingPredicate:
             [NSPredicate predicateWithBlock:^BOOL(TransferItem *item, id _) {
                 return item.state != TransferItemStateCompleted &&
                        item.state != TransferItemStateFailed   &&
                        item.state != TransferItemStateCancelled;
             }]];
+        // Collect anything that was removed so we can fire one notification
+        NSMutableArray *r = [NSMutableArray array];
+        for (TransferItem *it in before)
+            if (![self.mutableItems containsObject:it]) [r addObject:it];
+        removed = r;
+    }
+    // FIX (BUG): notify observers so UI and any future listener updates.
+    if (removed.count) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:TransferEngineItemDidUpdateNotification
+                              object:self
+                            userInfo:@{}];
+        });
     }
 }
 

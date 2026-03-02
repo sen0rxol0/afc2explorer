@@ -22,6 +22,9 @@
 // Empty / disconnected overlay
 @property (nonatomic, strong) NSView      *emptyStateView;
 
+// Track whether a connection-error alert is already showing to avoid stacking.
+@property (nonatomic, assign) BOOL errorAlertPresented;
+
 @end
 
 @implementation MainWindowController
@@ -138,8 +141,8 @@
     detail.translatesAutoresizingMaskIntoConstraints = NO;
     self.deviceDetailLabel = detail;
 
-    // Reconnect button (only visible on failure)
-    NSButton *reconBtn = [NSButton buttonWithTitle:@"Reconnect"
+    // Reconnect button (only visible on failure / disconnected)
+    NSButton *reconBtn = [NSButton buttonWithTitle:@"\u21ba Reconnect"
                                             target:self
                                             action:@selector(reconnect:)];
     reconBtn.bezelStyle  = NSBezelStyleInline;
@@ -223,14 +226,14 @@
     subtitle.alignment = NSTextAlignmentCenter;
     subtitle.translatesAutoresizingMaskIntoConstraints = NO;
 
-    NSButton *guideBtn = [NSButton buttonWithTitle:@"Open AFC2 Installation Guide…"
+    NSButton *guideBtn = [NSButton buttonWithTitle:@"Open AFC2 Installation Guide\u2026"
                                             target:self
                                             action:@selector(showAFC2InstallGuide:)];
     guideBtn.bezelStyle = NSBezelStyleRounded;
     guideBtn.keyEquivalent = @"\r";
     guideBtn.translatesAutoresizingMaskIntoConstraints = NO;
 
-    NSButton *troubleBtn = [NSButton buttonWithTitle:@"Connection Troubleshooting…"
+    NSButton *troubleBtn = [NSButton buttonWithTitle:@"Connection Troubleshooting\u2026"
                                               target:self
                                               action:@selector(showTroubleshooting:)];
     troubleBtn.bezelStyle = NSBezelStyleInline;
@@ -275,6 +278,8 @@
                name:DeviceDidDisconnectNotification object:nil];
     [nc addObserver:self selector:@selector(deviceFailed:)
                name:DeviceConnectionFailedNotification object:nil];
+    [nc addObserver:self selector:@selector(deviceRetrying:)
+               name:DeviceConnectionRetryingNotification object:nil];
 }
 
 - (void)deviceConnected:(NSNotification *)note {
@@ -287,6 +292,11 @@
 
     [self.ipadVC navigateTo:@"/"];
     [self updateStatusForState:DeviceConnectionStateConnected];
+
+    // FIX (UX): reflect device name in window title bar so it's visible even
+    // when the status bar is small.
+    NSString *devName = mgr.deviceName ?: @"iPad";
+    self.window.title = [NSString stringWithFormat:@"AFC2 Utility \u2014 %@", devName];
 
     // Fade out empty state
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
@@ -305,6 +315,7 @@
     self.macVC.transferEngine  = nil;
     self.transferVC.engine     = nil;
     [self updateStatusForState:DeviceConnectionStateDisconnected];
+    self.window.title = @"AFC2 Utility";
 
     // Fade in empty state
     self.emptyStateView.hidden     = NO;
@@ -318,12 +329,35 @@
 - (void)deviceFailed:(NSNotification *)note {
     NSError *err = note.userInfo[DeviceConnectionErrorKey];
     [self updateStatusForState:DeviceConnectionStateFailed];
-    [self presentConnectionError:err];
+    self.window.title = @"AFC2 Utility";
 
+    // Only present the alert if one is not already showing.
+    if (!self.errorAlertPresented) {
+        self.errorAlertPresented = YES;
+        [self presentConnectionError:err];
+        self.errorAlertPresented = NO;
+    }
+
+    // Auto-reset the status dot back to "disconnected" after a delay, and
+    // FIX (BUG): also sync the menu bar status item so it doesn't stay red.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        [self updateStatusForState:DeviceConnectionStateDisconnected];
+        if ([DeviceManager sharedManager].connectionState == DeviceConnectionStateFailed) {
+            [self updateStatusForState:DeviceConnectionStateDisconnected];
+            // Sync the menu bar icon to the reset state.
+            [[NSNotificationCenter defaultCenter]
+                postNotificationName:DeviceDidDisconnectNotification
+                              object:[DeviceManager sharedManager]];
+        }
     });
+}
+
+- (void)deviceRetrying:(NSNotification *)note {
+    // Show the "Retrying…" message in the status bar without presenting an alert.
+    NSError *info = note.userInfo[DeviceConnectionErrorKey];
+    self.statusLabel.stringValue = info.localizedDescription ?: @"Retrying\u2026";
+    self.statusDot.layer.backgroundColor = [NSColor systemYellowColor].CGColor;
+    self.reconnectButton.hidden = YES;
 }
 
 // ── Status update ─────────────────────────────────────────────────────────────
@@ -340,16 +374,16 @@
             break;
         case DeviceConnectionStateConnecting:
             dotColor = [NSColor systemYellowColor];
-            text     = @"Connecting…";
+            text     = @"Connecting\u2026";
             self.reconnectButton.hidden = YES;
             break;
         case DeviceConnectionStateConnected: {
             dotColor = [NSColor systemGreenColor];
             DeviceManager *mgr = [DeviceManager sharedManager];
-            text = [NSString stringWithFormat:@"Connected — %@", mgr.deviceName ?: @"iPad"];
+            text = [NSString stringWithFormat:@"Connected \u2014 %@", mgr.deviceName ?: @"iPad"];
             NSString *udid = mgr.deviceUDID;
             if (udid.length >= 12)
-                detail = [NSString stringWithFormat:@"UDID  %@…%@",
+                detail = [NSString stringWithFormat:@"UDID  %@\u2026%@",
                           [udid substringToIndex:8],
                           [udid substringFromIndex:udid.length - 4]];
             self.reconnectButton.hidden = YES;
@@ -358,7 +392,7 @@
         case DeviceConnectionStateFailed:
             dotColor = [NSColor systemRedColor];
             text     = @"Connection failed";
-            detail   = @"Check USB cable and AFC2 installation on device";
+            detail   = @"Check USB cable and AFC2 installation \u2014 use \u21ba Reconnect to retry";
             self.reconnectButton.hidden = NO;
             break;
     }
@@ -376,26 +410,33 @@
     alert.messageText = @"Could Not Connect to Device";
 
     NSString *reason = error.localizedDescription ?: @"An unknown error occurred.";
-    NSString *hint   = @"";
 
-    if (error.code == -3 ||
-        [reason containsString:@"AFC2"] ||
-        [reason containsString:@"service"]) {
-        hint = @"\n\nThis usually means Apple File Conduit 2 is not installed on the device. "
-               @"Use the Device › AFC2 Installation Guide to set it up.";
-    } else if (error.code == -1 ||
-               [reason containsString:@"lockdown"] ||
-               [reason containsString:@"trust"]) {
-        hint = @"\n\nUnlock the iPad and tap \"Trust This Computer\" when prompted, "
-               @"then try reconnecting.";
+    // The error descriptions from DeviceManager.m are already user-friendly and
+    // contain actionable guidance, so just show them directly.  We only append
+    // a guide link hint when the message references AFC2 specifically.
+    NSString *guideHint = @"";
+    if ([reason containsString:@"AFC2"] || [reason containsString:@"afc2"] ||
+        [reason containsString:@"Cydia"] || [reason containsString:@"jailbreak"]) {
+        guideHint = @"\n\nUse the \u201cOpen AFC2 Guide\u2026\u201d button for step-by-step installation instructions.";
     }
 
-    alert.informativeText = [reason stringByAppendingString:hint];
+    alert.informativeText = [reason stringByAppendingString:guideHint];
     [alert addButtonWithTitle:@"OK"];
-    [alert addButtonWithTitle:@"Open AFC2 Guide…"];
 
-    if ([alert runModal] == NSAlertSecondButtonReturn)
-        [self showAFC2InstallGuide:nil];
+    BOOL offerGuide = (guideHint.length > 0);
+    if (offerGuide) {
+        [alert addButtonWithTitle:@"Open AFC2 Guide\u2026"];
+    } else {
+        [alert addButtonWithTitle:@"Connection Troubleshooting\u2026"];
+    }
+
+    NSModalResponse resp = [alert runModal];
+    if (resp == NSAlertSecondButtonReturn) {
+        if (offerGuide)
+            [self showAFC2InstallGuide:nil];
+        else
+            [self showTroubleshooting:nil];
+    }
 }
 
 // ── Menu action forwarding ────────────────────────────────────────────────────
@@ -407,7 +448,9 @@
 
 - (IBAction)reconnect:(id)sender {
     [[DeviceManager sharedManager] disconnect];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
+    // Update status immediately so the dot doesn't stay red/failed
+    [self updateStatusForState:DeviceConnectionStateConnecting];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         [[DeviceManager sharedManager] startMonitoring];
     });
@@ -423,20 +466,23 @@
         @"Apple File Conduit 2 (AFC2) grants full filesystem access over USB "
         @"on a jailbroken device.\n\n"
         @"Requirements\n"
-        @"  • iPad 2 running iOS 9.3.5\n"
-        @"  • Device jailbroken with Phœnix\n\n"
+        @"  \u2022 iPad 2 running iOS 9.3.5\n"
+        @"  \u2022 Device jailbroken with Ph\u0153nix\n\n"
         @"Steps\n"
         @"  1. Open Cydia on the iPad.\n"
-        @"  2. Tap Search and type \"Apple File Conduit 2\".\n"
-        @"  3. Tap the result, then tap Install → Confirm.\n"
-        @"  4. When Cydia finishes, tap Restart Springboard.\n"
-        @"  5. Plug the iPad into your Mac with a Lightning cable.\n"
-        @"  6. Unlock the iPad — tap Trust if prompted.\n"
-        @"  7. AFC2 Utility will detect the device automatically.\n\n"
-        @"Source: BigBoss (pre-added in Cydia on iOS 9, no extra steps needed).";
+        @"  2. Tap Search and type \u201cApple File Conduit 2\u201d.\n"
+        @"  3. Tap the result published by saurik \u2014 source: BigBoss.\n"
+        @"  4. Tap Install \u2192 Confirm.\n"
+        @"  5. When Cydia finishes, tap Restart Springboard.\n"
+        @"  6. Plug the iPad into your Mac with a Lightning cable.\n"
+        @"  7. Unlock the iPad \u2014 tap Trust if prompted.\n"
+        @"  8. AFC2 Utility will detect the device automatically.\n\n"
+        @"Note: The BigBoss source is pre-added in Cydia on iOS 9 \u2014 no extra setup needed.\n\n"
+        @"If Cydia is not present, the device needs to be jailbroken first. "
+        @"Tap \u201cJailbreak Guide\u2026\u201d for instructions.";
     [alert addButtonWithTitle:@"Done"];
-    [alert addButtonWithTitle:@"Jailbreak Guide…"];
-    [alert addButtonWithTitle:@"Troubleshooting…"];
+    [alert addButtonWithTitle:@"Jailbreak Guide\u2026"];
+    [alert addButtonWithTitle:@"Troubleshooting\u2026"];
 
     NSModalResponse r = [alert runModal];
     if (r == NSAlertSecondButtonReturn)  [self showJailbreakGuide:nil];
@@ -448,19 +494,19 @@
     alert.alertStyle    = NSAlertStyleInformational;
     alert.messageText   = @"Jailbreaking iPad 2 on iOS 9.3.5";
     alert.informativeText =
-        @"Phœnix is the recommended semi-untethered jailbreak for iPad 2 / iOS 9.3.5, "
+        @"Ph\u0153nix is the recommended semi-untethered jailbreak for iPad 2 / iOS 9.3.5, "
         @"created by Siguza and tihmstar.\n\n"
         @"Steps\n"
-        @"  1. Download the Phœnix IPA from phoenixpwn.com on your Mac.\n"
+        @"  1. Download the Ph\u0153nix IPA from phoenixpwn.com on your Mac.\n"
         @"  2. Install it onto the iPad using AltStore or Sideloadly.\n"
-        @"  3. On the iPad: Settings › General › VPN & Device Management\n"
-        @"     → trust your Apple ID's developer certificate.\n"
-        @"  4. Open the Phœnix app on the iPad and follow the on-screen steps.\n"
+        @"  3. On the iPad: Settings \u203a General \u203a VPN & Device Management\n"
+        @"     \u2192 trust your Apple ID\u2019s developer certificate.\n"
+        @"  4. Open the Ph\u0153nix app on the iPad and follow the on-screen steps.\n"
         @"  5. After a successful jailbreak, Cydia appears on the home screen.\n\n"
-        @"Note: Phœnix is semi-untethered — the jailbreak is lost on every reboot. "
-        @"Re-run the Phœnix app (without reinstalling) each time the device restarts.";
+        @"Important: Ph\u0153nix is semi-untethered \u2014 the jailbreak is lost on every reboot. "
+        @"Re-run the Ph\u0153nix app (without reinstalling) each time the device restarts.";
     [alert addButtonWithTitle:@"Done"];
-    [alert addButtonWithTitle:@"AFC2 Guide…"];
+    [alert addButtonWithTitle:@"AFC2 Guide\u2026"];
 
     if ([alert runModal] == NSAlertSecondButtonReturn)
         [self showAFC2InstallGuide:nil];
@@ -472,24 +518,27 @@
     alert.messageText   = @"Connection Troubleshooting";
     alert.informativeText =
         @"Work through these steps in order:\n\n"
-        @"1. Cable  — try a different Lightning cable.\n\n"
-        @"2. Trust prompt  — unlock the iPad. If \"Trust This Computer?\" "
+        @"1. Cable \u2014 try a different Lightning cable or USB port.\n\n"
+        @"2. Trust prompt \u2014 unlock the iPad. If \u201cTrust This Computer?\u201d "
         @"appears, tap Trust.\n\n"
-        @"3. AFC2 missing  — open Cydia and confirm \"Apple File Conduit 2\" is "
+        @"3. Re-jailbreak \u2014 Ph\u0153nix is semi-untethered; the jailbreak is lost "
+        @"on each reboot. Open the Ph\u0153nix app on the iPad again.\n\n"
+        @"4. AFC2 missing \u2014 open Cydia and confirm \u201cApple File Conduit 2\u201d is "
         @"installed. If not, install it from BigBoss.\n\n"
-        @"4. Re-jailbreak  — Phœnix is semi-untethered; the jailbreak is lost "
-        @"on each reboot. Open the Phœnix app on the iPad again.\n\n"
-        @"5. Restart usbmuxd  — in Terminal on your Mac:\n"
+        @"5. Denied trust \u2014 on the iPad:\n"
+        @"       Settings \u203a General \u203a Transfer or Reset iPad\n"
+        @"       \u2192 Reset Location & Privacy\n"
+        @"   Reconnect and accept the new trust prompt.\n\n"
+        @"6. Restart usbmuxd \u2014 in Terminal on your Mac:\n"
         @"       sudo pkill usbmuxd\n"
         @"   macOS restarts usbmuxd automatically. Reconnect the device.\n\n"
-        @"6. Revoke trust  — on the iPad:\n"
-        @"       Settings › General › Transfer or Reset iPad\n"
-        @"       → Reset Location & Privacy\n"
-        @"   Reconnect and accept the new trust prompt.\n\n"
-        @"7. Console.app  — filter by \"usbmuxd\" or \"lockdownd\" for low-level "
+        @"7. Console.app \u2014 filter by \u201cusbmuxd\u201d or \u201clockdownd\u201d for low-level "
         @"error details.";
     [alert addButtonWithTitle:@"Done"];
-    [alert runModal];
+    [alert addButtonWithTitle:@"AFC2 Guide\u2026"];
+
+    if ([alert runModal] == NSAlertSecondButtonReturn)
+        [self showAFC2InstallGuide:nil];
 }
 
 - (void)showHelp:(id)sender {
@@ -498,25 +547,25 @@
     alert.messageText   = @"How to Use AFC2 Utility";
     alert.informativeText =
         @"Browsing\n"
-        @"  • Left panel — your Mac's file system.\n"
-        @"  • Right panel — the iPad's file system.\n"
-        @"  • Click ▶ to expand a directory on the iPad.\n"
-        @"  • Double-click a Mac folder to navigate into it.\n\n"
+        @"  \u2022 Left panel \u2014 your Mac\u2019s file system.\n"
+        @"  \u2022 Right panel \u2014 the iPad\u2019s file system.\n"
+        @"  \u2022 Click \u25b6 to expand a directory on the iPad.\n"
+        @"  \u2022 Double-click a Mac folder to navigate into it.\n\n"
         @"Transferring files\n"
-        @"  • Drag files from the Mac panel → iPad panel to upload.\n"
-        @"  • Right-click an iPad item → Download to save to your Mac.\n"
-        @"  • ⌘U / ⌘D — Upload / Download from the File menu.\n\n"
+        @"  \u2022 Drag files from the Mac panel \u2192 iPad panel to upload.\n"
+        @"  \u2022 Right-click an iPad item \u2192 Download to save to your Mac.\n"
+        @"  \u2022 \u2318U / \u2318D \u2014 Upload / Download from the File menu.\n\n"
         @"Managing iPad files\n"
-        @"  • Right-click for: Download, Rename, Delete.\n"
-        @"  • ⇧⌘N — New Folder at the current iPad path.\n"
-        @"  • ↑ — go up one directory.  ↻ — refresh.\n\n"
+        @"  \u2022 Right-click for: Download, Rename, Delete.\n"
+        @"  \u2022 \u21e7\u2318N \u2014 New Folder at the current iPad path.\n"
+        @"  \u2022 \u2191 \u2014 go up one directory.  \u21bb \u2014 refresh.\n\n"
         @"Transfers\n"
-        @"  • Active and completed transfers appear in the bottom panel.\n"
-        @"  • You can browse freely while transfers run in the background.\n"
-        @"  • Click a failed transfer for error details.\n\n"
+        @"  \u2022 Active and completed transfers appear in the bottom panel.\n"
+        @"  \u2022 You can browse freely while transfers run in the background.\n"
+        @"  \u2022 Double-click a failed transfer for error details.\n\n"
         @"Safety\n"
-        @"  • Writes to /System, /bin, /usr, /sbin are always blocked.\n"
-        @"  • Writes to /Library, /etc, /private require confirmation.";
+        @"  \u2022 Writes to /System, /bin, /usr, /sbin are always blocked.\n"
+        @"  \u2022 Writes to /Library, /etc, /private require confirmation.";
     [alert addButtonWithTitle:@"Done"];
     [alert runModal];
 }
