@@ -16,6 +16,8 @@
 		4C9FD3C36C72BE188426A110 /* DeviceManager.m in Sources */ = {isa = PBXBuildFile; fileRef = FCC6DC4501EB1C5BCE32A991 /* DeviceManager.m */; };
 		4EC0BF7C9A7E35314FD6A722 /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 25257446E33176CD6F09D086 /* AppDelegate.m */; };
 		54FB9939D7567AB26C2A9CEC /* iPadBrowserViewController.h in Headers */ = {isa = PBXBuildFile; fileRef = 6FDDB9248DE73041770440CF /* iPadBrowserViewController.h */; settings = {ATTRIBUTES = (Project, ); }; };
+		554435982F55741000C5DC19 /* StatusBarController.m in Sources */ = {isa = PBXBuildFile; fileRef = 554435972F55741000C5DC19 /* StatusBarController.m */; };
+		554435992F5576AD00C5DC19 /* StatusBarController.h in Headers */ = {isa = PBXBuildFile; fileRef = 554435962F5573F300C5DC19 /* StatusBarController.h */; };
 		5A7F97C2D014C2B3811C4D6B /* libimobiledevice-1.0.dylib in Copy Frameworks */ = {isa = PBXBuildFile; fileRef = C83BFE78C526B7F81B53493A /* libimobiledevice-1.0.dylib */; };
 		62108085D35C467F54638EED /* AFC2Explorer-Prefix.pch in Headers */ = {isa = PBXBuildFile; fileRef = E6752A1DEBDF7E7D8022C266 /* AFC2Explorer-Prefix.pch */; settings = {ATTRIBUTES = (Project, ); }; };
 		760C2604D3171F26E1474255 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 07561AB345BA3F321DAD32D2 /* main.m */; };
@@ -60,6 +62,8 @@
 		27BD6D728C3EE285801839E1 /* FileSafetyLayer.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = FileSafetyLayer.m; sourceTree = SOURCE_ROOT; };
 		2BAEA25B77CDE437D1829D7C /* MacBrowserViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MacBrowserViewController.h; sourceTree = SOURCE_ROOT; };
 		2F3D5BBC6B31147AD03DE5FA /* TransferEngine.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = TransferEngine.m; sourceTree = SOURCE_ROOT; };
+		554435962F5573F300C5DC19 /* StatusBarController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = StatusBarController.h; sourceTree = "<group>"; };
+		554435972F55741000C5DC19 /* StatusBarController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = StatusBarController.m; sourceTree = "<group>"; };
 		57F240C1252C5ABB3F523FFC /* DeviceManager.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DeviceManager.h; sourceTree = SOURCE_ROOT; };
 		6FDDB9248DE73041770440CF /* iPadBrowserViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = iPadBrowserViewController.h; sourceTree = SOURCE_ROOT; };
 		7457F2FA33E5CD3C0ABAB96E /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = SOURCE_ROOT; };
@@ -141,6 +145,7 @@
 				2BAEA25B77CDE437D1829D7C /* MacBrowserViewController.h */,
 				6FDDB9248DE73041770440CF /* iPadBrowserViewController.h */,
 				E6752A1DEBDF7E7D8022C266 /* AFC2Explorer-Prefix.pch */,
+				554435962F5573F300C5DC19 /* StatusBarController.h */,
 			);
 			name = Headers;
 			sourceTree = "<group>";
@@ -158,6 +163,7 @@
 				B03480C50B919BD3738870E1 /* TransferPanelViewController.m */,
 				20E60FD44817F6C84846C93F /* MacBrowserViewController.m */,
 				18C4DD7207DD1D0213020D80 /* iPadBrowserViewController.m */,
+				554435972F55741000C5DC19 /* StatusBarController.m */,
 			);
 			name = Sources;
 			sourceTree = "<group>";
@@ -176,6 +182,7 @@
 				86EA4F8FAAAB694792633764 /* FileSafetyLayer.h in Headers */,
 				78C64965153FD0140821B7AA /* MainWindowController.h in Headers */,
 				FB31BCD6DBAB578A76B25108 /* TransferPanelViewController.h in Headers */,
+				554435992F5576AD00C5DC19 /* StatusBarController.h in Headers */,
 				D82FFB57D13638523C370ECC /* MacBrowserViewController.h in Headers */,
 				54FB9939D7567AB26C2A9CEC /* iPadBrowserViewController.h in Headers */,
 				62108085D35C467F54638EED /* AFC2Explorer-Prefix.pch in Headers */,
@@ -252,6 +259,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				554435982F55741000C5DC19 /* StatusBarController.m in Sources */,
 				760C2604D3171F26E1474255 /* main.m in Sources */,
 				4EC0BF7C9A7E35314FD6A722 /* AppDelegate.m in Sources */,
 				4C9FD3C36C72BE188426A110 /* DeviceManager.m in Sources */,
