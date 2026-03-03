@@ -132,6 +132,24 @@ jobs:
           lipo -archs "$FRAMEWORKS_DIR/$NAME"
         done
 
+   # ── 8. Sign dylibs (ad-hoc) ───────────────────────────────────────────────
+    # CRITICAL: The app uses the hardened runtime. Even with
+    # com.apple.security.cs.disable-library-validation=true in entitlements,
+    # that entitlement is only evaluated when the *app binary* is signed.
+    # If the bundled dylibs are unsigned, dyld rejects them at load time —
+    # the app launches but idevice_event_subscribe immediately fails.
+    # Ad-hoc signing (identity "-") gives each dylib a valid code signature
+    # without needing a Developer ID certificate.
+    - name: Sign dylibs (ad-hoc)
+      run: |
+        FRAMEWORKS_DIR="$GITHUB_WORKSPACE/Frameworks"
+        NAMES="libplist-2.0.dylib libusbmuxd-2.0.dylib libimobiledevice-1.0.dylib"
+        for NAME in $NAMES; do
+          codesign --force --sign - --timestamp=none "$FRAMEWORKS_DIR/$NAME"
+          echo "Signed (ad-hoc): $NAME"
+          codesign --verify --verbose "$FRAMEWORKS_DIR/$NAME" && echo "  Verified OK"
+        done
+        
    # ── 8. Build ──────────────────────────────────────────────────────────────
     - name: Build (${{ matrix.configuration }})
       run: |
