@@ -150,7 +150,7 @@ jobs:
           codesign --verify --verbose "$FRAMEWORKS_DIR/$NAME" && echo "  Verified OK"
         done
         
-   # ── 8. Build ──────────────────────────────────────────────────────────────
+   # ── 9. Build ──────────────────────────────────────────────────────────────
     - name: Build (${{ matrix.configuration }})
       run: |
         FRAMEWORKS_DIR="$GITHUB_WORKSPACE/Frameworks"
@@ -169,11 +169,41 @@ jobs:
           HEADER_SEARCH_PATHS="\"$GITHUB_WORKSPACE\" \"$BREW_PREFIX/include\" /usr/local/include" \
           OTHER_LDFLAGS="-L$FRAMEWORKS_DIR -limobiledevice-1.0 -lusbmuxd-2.0 -lplist-2.0" \
           LD_RUNPATH_SEARCH_PATHS="@executable_path/../Frameworks" \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGN_IDENTITY="" \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_REQUIRED=YES \
+          CODE_SIGNING_ALLOWED=YES \
           | xcpretty
 
-    # ── 9. Verify bundle ──────────────────────────────────────────────────────
+    # ── 10. Sign app bundle with entitlements ─────────────────────────────────
+    # Re-sign the full .app bundle so that the hardened-runtime entitlements
+    # (specifically disable-library-validation) are embedded into the signature.
+    # Without this the OS ignores the entitlements and rejects the ad-hoc dylibs.
+    - name: Sign app bundle with entitlements
+      run: |
+        APP="build/${{ matrix.configuration }}/AFC2Explorer.app"
+        ENTITLEMENTS="$GITHUB_WORKSPACE/AFC2Explorer.entitlements"
+
+        # Sign inner dylibs first
+        for dylib in "$APP/Contents/Frameworks/"*.dylib; do
+          [ -f "$dylib" ] || continue
+          codesign --force --sign - --timestamp=none "$dylib"
+          echo "Re-signed: $(basename $dylib)"
+        done
+
+        # Sign the app bundle with entitlements
+        codesign --force --sign - \
+          --entitlements "$ENTITLEMENTS" \
+          --timestamp=none \
+          --options runtime \
+          "$APP"
+
+        echo "=== Code signature ==="
+        codesign -d --verbose=4 "$APP" 2>&1 | head -20
+        echo ""
+        echo "=== Entitlements ==="
+        codesign -d --entitlements - "$APP" 2>/dev/null
+    
+    # ── 11. Verify bundle ──────────────────────────────────────────────────────
     - name: Verify app bundle
       run: |
         APP="build/${{ matrix.configuration }}/AFC2Explorer.app"
@@ -187,7 +217,7 @@ jobs:
         echo "=== Deployment target ==="
         vtool -show-build "$APP/Contents/MacOS/AFC2Explorer"
 
-    # ── 10. Zip app bundle ───────────────────────────────────────────────────
+    # ── 12. Zip app bundle ───────────────────────────────────────────────────
     # GitHub's artifact upload zips directories itself but does NOT preserve
     # symlinks inside .app bundles (frameworks, versioned dylib links).
     # Zipping manually with ditto before upload preserves the full bundle
@@ -201,7 +231,7 @@ jobs:
         echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
         echo "Zip size: $(du -sh $ZIP | cut -f1)"
 
-    # ── 11. Upload app artifact ───────────────────────────────────────────────
+    # ── 13. Upload app artifact ───────────────────────────────────────────────
     # Name includes branch/tag + short SHA for easy identification in the UI.
     # Short SHA is the first 7 chars; extracted here for readability.
     - name: Upload app artifact
