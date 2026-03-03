@@ -12,23 +12,26 @@ typedef NS_ENUM(NSInteger, DeviceConnectionState) {
 extern NSNotificationName const DeviceDidConnectNotification;
 extern NSNotificationName const DeviceDidDisconnectNotification;
 extern NSNotificationName const DeviceConnectionFailedNotification;
-extern NSString *const DeviceConnectionErrorKey;
-
-/// Posted on the main thread whenever the error category changes so the UI can
-/// offer targeted advice.  userInfo contains DeviceConnectionErrorKey.
 extern NSNotificationName const DeviceConnectionRetryingNotification;
+extern NSString *const DeviceConnectionErrorKey;
 
 @interface DeviceManager : NSObject
 
-@property (atomic, readonly) DeviceConnectionState connectionState;
+@property (atomic,   readonly) DeviceConnectionState connectionState;
 @property (nonatomic, readonly, strong) AFC2Client *afc2Client;
-@property (nonatomic, readonly, copy) NSString *deviceName;
-@property (nonatomic, readonly, copy) NSString *deviceUDID;
+@property (nonatomic, readonly, copy)   NSString   *deviceName;
+@property (nonatomic, readonly, copy)   NSString   *deviceUDID;
 
 + (instancetype)sharedManager;
 
+/// Start the USB event listener and probe for already-attached devices.
 - (void)startMonitoring;
+
+/// Stop the USB event listener and tear down any active session.
 - (void)stopMonitoring;
-- (void)disconnect;
+
+/// Tear down the current session and probe again immediately.
+/// Safe to call from any thread.
+- (void)reconnect;
 
 @end

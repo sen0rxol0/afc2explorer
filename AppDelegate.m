@@ -181,13 +181,7 @@
 - (IBAction)triggerRefresh:(id)sender   { [self.mainWindowController triggerRefresh]; }
 
 - (IBAction)reconnectDevice:(id)sender {
-    [[DeviceManager sharedManager] disconnect];
-    // FIX (UX): use a slightly longer delay so usbmuxd has time to stabilise
-    // before we re-subscribe and re-probe for the device.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.8 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        [[DeviceManager sharedManager] startMonitoring];
-    });
+    [[DeviceManager sharedManager] reconnect];
 }
 
 - (IBAction)showAFC2Guide:(id)sender        { [self.mainWindowController showAFC2InstallGuide:nil]; }
